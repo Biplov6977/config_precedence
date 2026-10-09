@@ -39,7 +39,6 @@ db_conn = duckdb.connect(database=":memory:")
 
 def init_ledger_database():
     try:
-        # 1. Fetch exchange rates
         r_rates = requests.get(RATES_URL, timeout=10)
         if r_rates.status_code == 200:
             data = r_rates.json()
@@ -49,7 +48,6 @@ def init_ledger_database():
         print(f"Error fetching rates: {e}")
 
     try:
-        # 2. Fetch all raw ledger entries
         r_export = requests.get(EXPORT_URL, timeout=15)
         raw_text = r_export.text
     except Exception as e:
@@ -63,7 +61,6 @@ def init_ledger_database():
         try:
             item = json.loads(line)
             oid = item["id"]
-            # Keep latest entry by updated_at
             if (
                 oid not in orders_map
                 or item["updated_at"] > orders_map[oid]["updated_at"]
@@ -72,21 +69,18 @@ def init_ledger_database():
         except Exception:
             continue
 
-    processed_orders = []
+    rows = []
     for item in orders_map.values():
         currency = item.get("currency", "USD")
         rate = RATES.get(currency, 1.0)
         amount = float(item.get("amount", 0.0))
         amount_usd = round(amount * rate, 2)
 
-        # Parse created_at and convert to Asia/Kolkata business date
         created_str = item.get("created_at", "")
-        dt_kolkata = None
         date_str = ""
         year_val, month_val = 0, 0
         if created_str:
             try:
-                # Normalize trailing 'Z' if present
                 clean_ts = created_str.replace("Z", "+00:00")
                 dt = datetime.fromisoformat(clean_ts)
                 dt_kolkata = dt.astimezone(KOLKATA_TZ)
@@ -96,25 +90,24 @@ def init_ledger_database():
             except Exception:
                 pass
 
-        processed_orders.append(
-            {
-                "id": item["id"],
-                "customer": item.get("customer", ""),
-                "region": item.get("region", ""),
-                "product": item.get("product", ""),
-                "qty": int(item.get("qty", 0)),
-                "unit_price": float(item.get("unit_price", 0.0)),
-                "amount": amount,
-                "currency": currency,
-                "amount_usd": amount_usd,
-                "status": item.get("status", ""),
-                "date": date_str,
-                "year": year_val,
-                "month": month_val,
-            }
+        rows.append(
+            (
+                item["id"],
+                item.get("customer", ""),
+                item.get("region", ""),
+                item.get("product", ""),
+                int(item.get("qty", 0)),
+                float(item.get("unit_price", 0.0)),
+                amount,
+                currency,
+                amount_usd,
+                item.get("status", ""),
+                date_str,
+                year_val,
+                month_val,
+            )
         )
 
-    # 3. Load into in-memory table
     db_conn.execute("DROP TABLE IF EXISTS orders")
     db_conn.execute("""
         CREATE TABLE orders (
@@ -134,16 +127,11 @@ def init_ledger_database():
         )
     """)
 
-    if processed_orders:
-        import pandas as pd
-
-        df = pd.DataFrame(processed_orders)
-        db_conn.register("df_orders", df)
-        db_conn.execute("INSERT INTO orders SELECT * FROM df_orders")
+    if rows:
+        db_conn.executemany("INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
 
 
 init_ledger_database()
-
 
 # ==========================================
 # 1. QUESTION 7: 12-FACTOR CONFIG (GET)
