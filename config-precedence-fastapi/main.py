@@ -101,17 +101,30 @@ def effective_config(overrides: list[tuple[str, str]] | None = None) -> dict[str
             config[config_key] = value
 
     # Layer 5: query parameters named set-key=value, e.g. ?set-port=9000.
-    for param_name, raw_value in (overrides or []):
-        name = param_name.lower()
+   # Layer 5: CLI/query overrides have the highest precedence.
+# Support both ?workers=11 and ?set-workers=11.
+for param_name, raw_value in (overrides or []):
+    name = param_name.lower()
 
-        if name.startswith("set-"):
-            key = name[4:].replace("-", "_")
-        else:
-            key = name.replace("-", "_")
-    
-        if key in CONFIG_KEYS:
-            config[key] = raw_value
+    if name.startswith("set-"):
+        name = name[4:]
 
+    key = name.replace("-", "_")
+
+    # Support configuration aliases.
+    aliases = {
+        "num_workers": "workers",
+        "app_workers": "workers",
+        "app_port": "port",
+        "app_debug": "debug",
+        "app_log_level": "log_level",
+        "app_api_key": "api_key",
+    }
+    key = aliases.get(key, key)
+
+    if key in CONFIG_KEYS:
+        config[key] = raw_value
+        
     config = normalize_config(config)
     # Never expose the actual secret, regardless of its source or overrides.
     config["api_key"] = "****"
