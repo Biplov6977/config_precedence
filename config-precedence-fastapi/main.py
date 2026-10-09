@@ -65,29 +65,33 @@ def normalize_config(values: dict[str, Any]) -> dict[str, Any]:
     normalized["api_key"] = str(normalized.get("api_key", ""))
     return normalized
 
-
 def effective_config(overrides: list[tuple[str, str]] | None = None) -> dict[str, Any]:
     """Merge defaults -> YAML -> .env -> OS env -> CLI/query overrides."""
     config = dict(DEFAULTS)
 
-    # Layer 2: config.development.yaml
-    config.update({key: value for key, value in YAML_CONFIG.items() if key in CONFIG_KEYS})
+    # Layer 2: YAML configuration
+    config.update({
+        key: value
+        for key, value in YAML_CONFIG.items()
+        if key in CONFIG_KEYS
+    })
 
-    # Layer 3: .env. Alias NUM_WORKERS to workers.
+    # Layer 3: .env configuration
     dotenv_map = {
         "APP_PORT": "port",
         "NUM_WORKERS": "workers",
+        "APP_WORKERS": "workers",
         "APP_DEBUG": "debug",
         "APP_LOG_LEVEL": "log_level",
         "APP_API_KEY": "api_key",
     }
+
     for env_key, config_key in dotenv_map.items():
         value = DOTENV_CONFIG.get(env_key)
         if value is not None:
             config[config_key] = value
 
-    # Layer 4: OS/container variables. The fallback values reproduce the
-    # assigned OS layer in the exercise when running locally without variables.
+    # Layer 4: OS environment variables
     os_map = {
         "APP_PORT": "port",
         "APP_WORKERS": "workers",
@@ -95,23 +99,17 @@ def effective_config(overrides: list[tuple[str, str]] | None = None) -> dict[str
         "APP_LOG_LEVEL": "log_level",
         "APP_API_KEY": "api_key",
     }
+
     for env_key, config_key in os_map.items():
-        value = os.environ.get(env_key, OS_ENV_FALLBACKS.get(env_key))
+        value = os.environ.get(
+            env_key,
+            OS_ENV_FALLBACKS.get(env_key)
+        )
         if value is not None:
             config[config_key] = value
 
-    # Layer 5: query parameters named set-key=value, e.g. ?set-port=9000.
-   # Layer 5: CLI/query overrides have the highest precedence.
-# Support both ?workers=11 and ?set-workers=11.
-for param_name, raw_value in (overrides or []):
-    name = param_name.lower()
-
-    if name.startswith("set-"):
-        name = name[4:]
-
-    key = name.replace("-", "_")
-
-    # Support configuration aliases.
+    # Layer 5: CLI/query parameters have highest precedence.
+    # Accept both ?workers=11 and ?set-workers=11.
     aliases = {
         "num_workers": "workers",
         "app_workers": "workers",
@@ -120,14 +118,25 @@ for param_name, raw_value in (overrides or []):
         "app_log_level": "log_level",
         "app_api_key": "api_key",
     }
-    key = aliases.get(key, key)
 
-    if key in CONFIG_KEYS:
-        config[key] = raw_value
-        
+    for param_name, raw_value in (overrides or []):
+        name = param_name.lower()
+
+        if name.startswith("set-"):
+            name = name[4:]
+
+        key = name.replace("-", "_")
+        key = aliases.get(key, key)
+
+        if key in CONFIG_KEYS:
+            config[key] = raw_value
+
+    # Convert values to the required types.
     config = normalize_config(config)
-    # Never expose the actual secret, regardless of its source or overrides.
+
+    # Never expose the actual API key.
     config["api_key"] = "****"
+
     return config
 
 
