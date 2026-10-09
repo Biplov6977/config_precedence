@@ -1,8 +1,11 @@
 import asyncio
 import hashlib
+import os
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+import yaml
+from dotenv import load_dotenv
 
 app = FastAPI()
 
@@ -17,9 +20,40 @@ app.add_middleware(
 STUDENT_EMAIL = "23f1001103@ds.study.iitm.ac.in"
 
 
+# ==========================================
+# 1. QUESTION 7: 12-FACTOR CONFIG LOGIC (GET)
+# ==========================================
+def get_resolved_config(query_params):
+    # 1. Base default / YAML config
+    config = {}
+    yaml_path = "config.development.yaml"
+    if os.path.exists(yaml_path):
+        with open(yaml_path, "r") as f:
+            config = yaml.safe_load(f) or {}
+
+    # 2. .env overrides
+    load_dotenv(override=True)
+    for key, val in os.environ.items():
+        if key in config:
+            config[key] = val
+
+    # 3. Query string overrides (e.g. ?set=workers=12)
+    for qk, qv in query_params.items():
+        if qk == "set":
+            for pair in (qv if isinstance(qv, list) else [qv]):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    config[k] = int(v) if v.isdigit() else v
+        elif qk in config:
+            config[qk] = int(qv) if qv.isdigit() else qv
+
+    return config
+
+
 @app.get("/")
 @app.get("/{path:path}")
 async def handle_get(request: Request, path: str = ""):
+    # Support MCP SSE streaming if the grader requests it
     accept_header = request.headers.get("accept", "")
     if "text/event-stream" in accept_header:
 
@@ -32,9 +66,15 @@ async def handle_get(request: Request, path: str = ""):
         return StreamingResponse(
             sse_stream(), media_type="text/event-stream"
         )
-    return {"status": "ok", "message": "Live MCP Server Running"}
+
+    # Standard GET -> returns Q7 12-factor configuration
+    query_params = dict(request.query_params)
+    return get_resolved_config(query_params)
 
 
+# ==========================================
+# 2. QUESTION 14: LIVE MCP SERVER (POST)
+# ==========================================
 @app.post("/")
 @app.post("/{path:path}")
 async def handle_post(request: Request, path: str = ""):
@@ -46,7 +86,7 @@ async def handle_post(request: Request, path: str = ""):
     method = body.get("method")
     req_id = body.get("id")
 
-    # 1. MCP Handshake: initialize
+    # Handshake: initialize
     if method == "initialize":
         return JSONResponse(
             {
@@ -62,13 +102,13 @@ async def handle_post(request: Request, path: str = ""):
             }
         )
 
-    # 2. MCP Handshake: notifications/initialized
+    # Handshake: notifications/initialized
     elif method == "notifications/initialized":
         if req_id is not None:
             return JSONResponse({"jsonrpc": "2.0", "id": req_id, "result": {}})
         return Response(status_code=200)
 
-    # 3. Tool Discovery: tools/list
+    # Tool discovery: tools/list
     elif method == "tools/list":
         return JSONResponse(
             {
@@ -78,7 +118,7 @@ async def handle_post(request: Request, path: str = ""):
                     "tools": [
                         {
                             "name": "solve_challenge",
-                            "description": "Solves challenge by reading X-Exam-Challenge header",
+                            "description": "Solves challenge from header",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {},
@@ -89,18 +129,16 @@ async def handle_post(request: Request, path: str = ""):
             }
         )
 
-    # 4. Tool Execution: tools/call (repeated 5 times)
+    # Execution: tools/call (runs 5 times)
     elif method == "tools/call":
-        # Read challenge strictly from the incoming HTTP request headers
         challenge = request.headers.get("x-exam-challenge", "")
 
-        # Fallback to arguments if header was forwarded internally
         if not challenge and "params" in body:
             args = body["params"].get("arguments", {})
             if isinstance(args, dict):
                 challenge = args.get("challenge", "")
 
-        # Compute SHA-256("${challenge}:${normalizedEmail}")[:16]
+        # SHA-256("${challenge}:${normalizedEmail}")[:16]
         hash_payload = f"{challenge}:{STUDENT_EMAIL.strip().lower()}"
         result_hash = hashlib.sha256(hash_payload.encode("utf-8")).hexdigest()[
             :16
@@ -114,7 +152,6 @@ async def handle_post(request: Request, path: str = ""):
             }
         )
 
-    # Fallback for other standard RPC calls
     return JSONResponse(
         {
             "jsonrpc": "2.0",
@@ -122,9 +159,3 @@ async def handle_post(request: Request, path: str = ""):
             "error": {"code": -32601, "message": "Method not found"},
         }
     )
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
