@@ -150,8 +150,8 @@ app.add_middleware(
 )
 
 
-@app.get("/")
-def root() -> dict[str, str]:
+@app.api_route("/", methods=["GET", "HEAD"])
+def root():
     return {"status": "ok", "endpoint": "/effective-config"}
 
 
