@@ -102,9 +102,13 @@ def effective_config(overrides: list[tuple[str, str]] | None = None) -> dict[str
 
     # Layer 5: query parameters named set-key=value, e.g. ?set-port=9000.
     for param_name, raw_value in (overrides or []):
-        if not param_name.startswith("set-"):
-            continue
-        key = param_name[4:].replace("-", "_").lower()
+        name = param_name.lower()
+
+        if name.startswith("set-"):
+            key = name[4:].replace("-", "_")
+        else:
+            key = name.replace("-", "_")
+    
         if key in CONFIG_KEYS:
             config[key] = raw_value
 
